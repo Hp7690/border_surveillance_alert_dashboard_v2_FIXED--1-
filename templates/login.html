@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IBVAP — Login</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e13;
+    --panel: #10161d;
+    --panel-raised: #151d26;
+    --grid-line: #1d2731;
+    --text-primary: #dce4ea;
+    --text-muted: #5f7080;
+    --text-dim: #3d4a57;
+    --accent: #35d68a;
+    --accent-dim: #1d6e49;
+    --critical: #ff3b3b;
+    --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  .card {
+    width: 100%; max-width: 380px;
+    background: var(--panel); border: 1px solid var(--grid-line); border-radius: 8px;
+    padding: 32px 28px;
+  }
+  .brand { text-align: center; margin-bottom: 24px; }
+  .brand .mark {
+    width: 44px; height: 44px; margin: 0 auto 12px;
+    border: 2px solid var(--accent); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(53, 214, 138, 0.08);
+    color: var(--accent); font-family: var(--font-mono); font-weight: 700; font-size: 18px;
+  }
+  .brand .title { font-family: var(--font-mono); font-weight: 700; font-size: 16px; letter-spacing: 0.1em; }
+  .brand .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  form { display: flex; flex-direction: column; gap: 14px; margin-top: 22px; }
+  label { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); letter-spacing: 0.05em; margin-bottom: 6px; display: block; }
+  input {
+    width: 100%; background: var(--panel-raised); border: 1px solid var(--grid-line);
+    color: var(--text-primary); font-family: var(--font-mono); font-size: 13px;
+    padding: 10px 12px; border-radius: 5px;
+  }
+  input:focus { outline: none; border-color: var(--accent-dim); }
+  button {
+    margin-top: 6px; background: var(--accent-dim); border: 1px solid var(--accent);
+    color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.05em; padding: 11px; border-radius: 5px; cursor: pointer;
+  }
+  button:hover { background: var(--accent); color: #04140c; }
+
+  .error {
+    background: rgba(255,59,59,0.1); border: 1px solid var(--critical); color: var(--critical);
+    font-size: 12px; padding: 10px 12px; border-radius: 5px; margin-top: 16px; font-family: var(--font-mono);
+  }
+  .setup-notice {
+    background: rgba(255,210,63,0.08); border: 1px solid #7a6a1f; color: #ffd23f;
+    font-size: 12px; padding: 12px; border-radius: 5px; margin-top: 16px; line-height: 1.5;
+    font-family: var(--font-mono);
+  }
+  .setup-notice code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="mark">IB</div>
+      <div class="title">IBVAP</div>
+      <div class="subtitle">Intelligent Border Video Analytics Platform</div>
+    </div>
+
+    {% if no_users %}
+    <div class="setup-notice">
+      No login accounts exist yet. On the server, run:<br>
+      <code>python create_user.py --username admin</code><br>
+      then refresh this page.
+    </div>
+    {% else %}
+    <form method="POST">
+      <div>
+        <label for="username">USERNAME</label>
+        <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div>
+        <label for="password">PASSWORD</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit">Sign In</button>
+    </form>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    {% endif %}
+  </div>
+</body>
+</html>

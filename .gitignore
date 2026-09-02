@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+data/
+captures/
+models/known_faces/
+cameras.json
+webhooks.json
+.vscode/
+*.logss
+photos/
