@@ -78,6 +78,7 @@
     background: var(--panel); border: 1px solid var(--grid-line); border-radius: 6px; overflow: hidden;
     display: flex; flex-direction: column;
   }
+  .card .thumb-wrap { width: 100%; aspect-ratio: 16/9; background: #060a0e; }
   .card .thumb {
     width: 100%; aspect-ratio: 16/9; background: #060a0e; object-fit: cover; display: block;
   }
@@ -112,6 +113,9 @@
     </div>
   </div>
   <a class="back-link" href="/">&larr; Back to Live Dashboard</a>
+  <a class="back-link" href="/analytics" style="margin-left:10px;">Analytics</a>
+  <a class="back-link" href="/upload" style="margin-left:10px;">Upload Video</a>
+  <a class="back-link" href="/ledger" style="margin-left:10px;">Evidence Ledger</a>
   <a class="back-link" href="/logout" style="margin-left:10px;">Logout</a>
 </header>
 
@@ -137,6 +141,12 @@
       <option value="HIGH">High</option>
       <option value="MEDIUM">Medium</option>
       <option value="LOW">Low</option>
+    </select>
+    <select id="f-min-score">
+      <option value="">Any threat score</option>
+      <option value="80">80+ (Severe)</option>
+      <option value="60">60+ (Elevated)</option>
+      <option value="35">35+ (Moderate)</option>
     </select>
     <button id="refresh-btn">Refresh</button>
     <button id="export-json-btn">Export JSON</button>
@@ -175,6 +185,13 @@
     return `${date}  ${time}`;
   }
 
+  function scoreColor(score) {
+    if (score >= 80) return '#ff3b3b';
+    if (score >= 60) return '#ff9d2e';
+    if (score >= 35) return '#ffd23f';
+    return '#5f7080';
+  }
+
   function renderEvents(events) {
     grid.innerHTML = '';
     resultCount.textContent = `${events.length} incident${events.length === 1 ? '' : 's'}`;
@@ -192,27 +209,51 @@
         ? `<img class="thumb" src="${ev.snapshot_url}" loading="lazy" alt="snapshot">`
         : `<div class="thumb placeholder">NO SNAPSHOT</div>`;
 
+      const score = ev.threat_score ?? 0;
+      const scoreBadge = `<span title="Threat score" style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:${scoreColor(score)};border:1px solid ${scoreColor(score)};border-radius:3px;padding:1px 7px;">${score}</span>`;
+
+      const clipBtnHtml = ev.clip_url
+        ? `<button class="clip-toggle-btn" data-clip="${ev.clip_url}" style="font-family:var(--font-mono);font-size:10px;color:var(--accent);background:transparent;border:1px solid var(--accent-dim);border-radius:3px;padding:2px 8px;cursor:pointer;">▶ View clip</button>`
+        : '';
+
       card.innerHTML = `
-        ${thumbHtml}
+        <div class="thumb-wrap">${thumbHtml}</div>
         <div class="body">
           <div class="top-row">
-            <span class="badge ${ev.severity}">${ev.severity}</span>
+            <span style="display:flex;align-items:center;gap:6px;">
+              <span class="badge ${ev.severity}">${ev.severity}</span>
+              ${scoreBadge}
+            </span>
             <span class="time">${fmtDateTime(ev.date, ev.time)}</span>
           </div>
           <div class="desc">${ev.description}</div>
-          <div class="cam">Camera: ${ev.camera_id} · ${labelFor(ev.event_type)}</div>
+          <div class="cam" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>Camera: ${ev.camera_id} · ${labelFor(ev.event_type)}</span>
+            ${clipBtnHtml}
+          </div>
         </div>
       `;
       grid.appendChild(card);
+
+      const clipBtn = card.querySelector('.clip-toggle-btn');
+      if (clipBtn) {
+        clipBtn.addEventListener('click', () => {
+          const thumbWrap = card.querySelector('.thumb-wrap');
+          if (thumbWrap.querySelector('video')) return; // already playing
+          thumbWrap.innerHTML = `<video class="thumb" src="${clipBtn.dataset.clip}" controls autoplay loop></video>`;
+        });
+      }
     }
   }
 
   async function loadEvents() {
     const type = document.getElementById('f-type').value;
     const severity = document.getElementById('f-severity').value;
+    const minScore = document.getElementById('f-min-score').value;
     const params = new URLSearchParams({ limit: '150' });
     if (type) params.set('event_type', type);
     if (severity) params.set('severity', severity);
+    if (minScore) params.set('min_score', minScore);
 
     try {
       const res = await fetch(`/api/events?${params.toString()}`);
@@ -228,13 +269,16 @@
   document.getElementById('refresh-btn').addEventListener('click', loadEvents);
   document.getElementById('f-type').addEventListener('change', loadEvents);
   document.getElementById('f-severity').addEventListener('change', loadEvents);
+  document.getElementById('f-min-score').addEventListener('change', loadEvents);
 
   function currentFilterParams() {
     const type = document.getElementById('f-type').value;
     const severity = document.getElementById('f-severity').value;
+    const minScore = document.getElementById('f-min-score').value;
     const params = new URLSearchParams({ limit: '1000' });
     if (type) params.set('event_type', type);
     if (severity) params.set('severity', severity);
+    if (minScore) params.set('min_score', minScore);
     return params;
   }
 

@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IBVAP — Upload Video Analysis</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e13;
+    --panel: #10161d;
+    --panel-raised: #151d26;
+    --grid-line: #1d2731;
+    --text-primary: #dce4ea;
+    --text-muted: #5f7080;
+    --text-dim: #3d4a57;
+    --accent: #35d68a;
+    --accent-dim: #1d6e49;
+    --critical: #ff3b3b;
+    --high: #ff9d2e;
+    --medium: #ffd23f;
+    --low: #5f7080;
+    --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text-primary); font-family: var(--font-sans);
+    min-height: 100vh;
+    background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px; background-attachment: fixed;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; border-bottom: 1px solid var(--grid-line);
+    background: linear-gradient(180deg, rgba(16,22,29,0.95), rgba(16,22,29,0.75));
+  }
+  .brand-text .title { font-family: var(--font-mono); font-weight: 700; font-size: 15px; letter-spacing: 0.08em; }
+  .brand-text .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .nav-links { display: flex; align-items: center; gap: 10px; }
+  .nav-link {
+    font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-decoration: none;
+    border: 1px solid var(--accent-dim); padding: 6px 12px; border-radius: 4px;
+  }
+  .nav-link.muted { color: var(--text-muted); border-color: var(--grid-line); }
+  #clock { color: var(--text-primary); font-weight: 600; font-family: var(--font-mono); font-size: 12px; }
+
+  main { display: grid; grid-template-columns: 1fr 380px; gap: 18px; padding: 18px 24px 24px; align-items: start; }
+
+  .panel { background: var(--panel); border: 1px solid var(--grid-line); border-radius: 4px; overflow: hidden; }
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between; padding: 10px 16px;
+    border-bottom: 1px solid var(--grid-line); background: var(--panel-raised);
+  }
+  .panel-header h2 {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted);
+  }
+
+  /* ---- Upload dropzone ---- */
+  .dropzone {
+    margin: 20px; padding: 40px 20px; border: 2px dashed var(--grid-line); border-radius: 8px;
+    text-align: center; cursor: pointer; transition: border-color .15s;
+  }
+  .dropzone:hover, .dropzone.drag-over { border-color: var(--accent); background: rgba(53,214,138,0.04); }
+  .dropzone .icon { font-size: 34px; margin-bottom: 10px; }
+  .dropzone .title { font-family: var(--font-mono); font-size: 13px; color: var(--text-primary); font-weight: 600; }
+  .dropzone .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+  #file-input { display: none; }
+
+  .selected-file {
+    margin: 0 20px 16px; padding: 10px 14px; background: var(--panel-raised); border-radius: 5px;
+    display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono); font-size: 12px;
+    display: none;
+  }
+  .analyze-btn {
+    margin: 0 20px 20px; width: calc(100% - 40px); background: var(--accent-dim); border: 1px solid var(--accent);
+    color: var(--text-primary); font-family: var(--font-mono); font-weight: 700; font-size: 12px; letter-spacing: .05em;
+    padding: 11px; border-radius: 5px; cursor: pointer; display: none;
+  }
+  .analyze-btn:hover { background: var(--accent); color: #04140c; }
+  .analyze-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ---- Progress ---- */
+  .progress-wrap { margin: 0 20px 20px; display: none; }
+  .progress-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .progress-track { height: 8px; background: var(--panel-raised); border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
+  .progress-fill.indeterminate { width: 30%; animation: indet 1.4s ease-in-out infinite; }
+  @keyframes indet { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10px;
+    font-weight: 700; letter-spacing: .05em; padding: 3px 10px; border-radius: 10px;
+  }
+  .status-pill.processing { background: rgba(255,210,63,0.15); color: var(--medium); }
+  .status-pill.completed { background: rgba(53,214,138,0.15); color: var(--accent); }
+  .status-pill.error { background: rgba(255,59,59,0.15); color: var(--critical); }
+
+  /* ---- Video panel (identical language to live dashboard) ---- */
+  .video-wrap { position: relative; background: #000; aspect-ratio: 16/9; display: none; align-items: center; justify-content: center; }
+  .video-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .scan-corner { position: absolute; width: 18px; height: 18px; border-color: var(--accent); opacity: 0.7; }
+  .scan-corner.tl { top: 10px; left: 10px; border-top: 2px solid; border-left: 2px solid; }
+  .scan-corner.tr { top: 10px; right: 10px; border-top: 2px solid; border-right: 2px solid; }
+  .scan-corner.bl { bottom: 10px; left: 10px; border-bottom: 2px solid; border-left: 2px solid; }
+  .scan-corner.br { bottom: 10px; right: 10px; border-bottom: 2px solid; border-right: 2px solid; }
+
+  .telemetry-bar { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--grid-line); display: none; }
+  .telemetry-item { padding: 10px 16px; border-right: 1px solid var(--grid-line); font-family: var(--font-mono); }
+  .telemetry-item:last-child { border-right: none; }
+  .telemetry-item .label { font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; }
+  .telemetry-item .value { font-size: 18px; font-weight: 600; color: var(--accent); margin-top: 3px; }
+
+  /* ---- Alert panel (identical to live dashboard) ---- */
+  .alert-panel { display: flex; flex-direction: column; max-height: calc(100vh - 130px); }
+  .alert-list { overflow-y: auto; flex: 1; }
+  .alert-item { padding: 12px 16px; border-bottom: 1px solid var(--grid-line); display: flex; gap: 10px; animation: slideIn 0.35s ease-out; }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+  .severity-bar { width: 3px; border-radius: 2px; flex-shrink: 0; }
+  .severity-bar.CRITICAL { background: var(--critical); box-shadow: 0 0 6px var(--critical); }
+  .severity-bar.HIGH { background: var(--high); }
+  .severity-bar.MEDIUM { background: var(--medium); }
+  .severity-bar.LOW { background: var(--low); }
+  .alert-body { flex: 1; min-width: 0; }
+  .alert-top-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .alert-type { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+  .alert-type.CRITICAL { color: var(--critical); }
+  .alert-type.HIGH { color: var(--high); }
+  .alert-type.MEDIUM { color: var(--medium); }
+  .alert-type.LOW { color: var(--text-muted); }
+  .alert-time { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+  .alert-detail { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
+  .alert-detail b { color: var(--text-primary); font-weight: 500; }
+  .empty-state { padding: 40px 20px; text-align: center; color: var(--text-dim); font-family: var(--font-mono); font-size: 12px; }
+  .alert-count-badge { font-family: var(--font-mono); font-size: 11px; color: var(--bg); background: var(--accent); padding: 2px 8px; border-radius: 10px; font-weight: 700; }
+
+  .past-jobs { margin: 16px 20px 0; }
+  .past-jobs h3 { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); letter-spacing: .08em; margin-bottom: 8px; }
+  .job-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px; background: var(--panel-raised); border-radius: 4px; margin-bottom: 6px;
+    font-family: var(--font-mono); font-size: 11px; cursor: pointer;
+  }
+  .job-row:hover { outline: 1px solid var(--accent-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand-text">
+    <div class="title">IBVAP — UPLOAD VIDEO ANALYSIS</div>
+    <div class="subtitle">Run the full detection pipeline on a recorded video file</div>
+  </div>
+  <div class="nav-links">
+    <a class="nav-link" href="/">&larr; Live Dashboard</a>
+    <a class="nav-link" href="/history">History</a>
+    <a class="nav-link" href="/ledger">Evidence Ledger</a>
+    <a class="nav-link" href="/analytics">Analytics</a>
+    {% if current_user %}
+    <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">{{ current_user }}</span>
+    <a class="nav-link muted" href="/logout">Logout</a>
+    {% endif %}
+    <div id="clock">--:--:--</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Video Upload &amp; Analysis</h2>
+      <span id="status-pill" class="status-pill" style="display:none;"></span>
+    </div>
+
+    <div class="dropzone" id="dropzone">
+      <div class="icon">📁</div>
+      <div class="title">Click to choose a video, or drag one here</div>
+      <div class="subtitle">MP4, AVI, MOV, MKV, WEBM · up to 500MB</div>
+      <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv,.webm,.m4v">
+    </div>
+    <div class="selected-file" id="selected-file">
+      <span id="selected-file-name"></span>
+      <span id="selected-file-size" style="color:var(--text-muted)"></span>
+    </div>
+    <button class="analyze-btn" id="analyze-btn">▶ RUN DETECTION ON THIS VIDEO</button>
+
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-label">
+        <span id="progress-text">Starting…</span>
+        <span id="progress-pct"></span>
+      </div>
+      <div class="progress-track"><div class="progress-fill indeterminate" id="progress-fill"></div></div>
+    </div>
+
+    <div class="video-wrap" id="video-wrap">
+      <img id="video-feed-img" alt="video analysis feed">
+      <div class="scan-corner tl"></div><div class="scan-corner tr"></div>
+      <div class="scan-corner bl"></div><div class="scan-corner br"></div>
+    </div>
+    <div class="telemetry-bar" id="telemetry-bar">
+      <div class="telemetry-item"><div class="label">FPS</div><div class="value" id="stat-fps">—</div></div>
+      <div class="telemetry-item"><div class="label">Active Tracks</div><div class="value" id="stat-tracks">—</div></div>
+      <div class="telemetry-item"><div class="label">Frames Processed</div><div class="value" id="stat-frames">—</div></div>
+      <div class="telemetry-item"><div class="label">Alerts Found</div><div class="value" id="stat-alerts">0</div></div>
+    </div>
+
+    <div class="past-jobs" id="past-jobs" style="display:none;">
+      <h3>RECENT UPLOADS</h3>
+      <div id="past-jobs-list"></div>
+    </div>
+  </div>
+
+  <div class="panel alert-panel">
+    <div class="panel-header">
+      <div style="display:flex;align-items:center;gap:10px"><h2>Detections &amp; Alerts</h2><button id="sound-btn" type="button" style="font:600 10px var(--font-mono);letter-spacing:.05em;background:transparent;color:var(--accent);border:1px solid var(--accent-dim);border-radius:3px;padding:4px 7px;cursor:pointer">🔊 ENABLE SOUND</button></div>
+      <span class="alert-count-badge" id="alert-count">0</span>
+    </div>
+    <div class="alert-list" id="alert-list">
+      <div class="empty-state" id="empty-state">UPLOAD A VIDEO TO BEGIN ANALYSIS</div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const socket = io();
+  const alertList = document.getElementById('alert-list');
+  const emptyState = document.getElementById('empty-state');
+  const alertCountBadge = document.getElementById('alert-count');
+  const soundBtn = document.getElementById('sound-btn');
+  let totalAlerts = 0;
+  let soundEnabled = false;
+  let audioCtx = null;
+  let activeCameraId = null; // the UPLOAD-xxxx job we're currently watching
+
+  function enableAlertSound() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      soundEnabled = true;
+      soundBtn.textContent = '🔊 SOUND ON';
+      soundBtn.style.background = 'var(--accent-dim)';
+      playAlertTone({ event_type: 'test', severity: 'LOW' });
+    } catch (e) { console.warn('Alert sound unavailable', e); }
+  }
+  soundBtn.addEventListener('click', enableAlertSound);
+
+  function beep({ freq, type = 'sine', startTime, duration = 0.18, peakGain = 0.14 }) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(peakGain, startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(startTime); osc.stop(startTime + duration + 0.02);
+  }
+
+  function playAlertTone(alert) {
+    if (!soundEnabled || !audioCtx) return;
+    const type = alert.event_type;
+    const severity = alert.severity || 'LOW';
+    const now = audioCtx.currentTime;
+    if (type === 'weapon_detected' || type === 'gun_detected') {
+      for (let i = 0; i < 3; i++) beep({ freq: 1050, type: 'square', startTime: now + i * 0.16, duration: 0.11, peakGain: 0.18 });
+    } else if (type === 'vehicle_detected' || type === 'vehicle_plate_read') {
+      beep({ freq: 420, type: 'sawtooth', startTime: now, duration: 0.14, peakGain: 0.13 });
+      beep({ freq: 340, type: 'sawtooth', startTime: now + 0.16, duration: 0.14, peakGain: 0.13 });
+    } else if (type === 'person_detected') {
+      beep({ freq: 520, type: 'sine', startTime: now, duration: 0.2, peakGain: 0.10 });
+    } else {
+      const freq = severity === 'CRITICAL' ? 880 : severity === 'HIGH' ? 660 : 520;
+      beep({ freq, type: severity === 'CRITICAL' ? 'square' : 'sine', startTime: now, duration: 0.22, peakGain: severity === 'CRITICAL' ? 0.16 : 0.10 });
+    }
+  }
+
+  function fmtTime(ts) { return new Date(ts * 1000).toLocaleTimeString('en-US', { hour12: false }); }
+
+  const EVENT_ICONS = { 'person_detected': '🧍', 'vehicle_detected': '🚗', 'gun_detected': '🔫', 'weapon_detected': '🔫', 'vehicle_plate_read': '🚘' };
+  function iconFor(type) { return EVENT_ICONS[type] || '⚠️'; }
+
+  function labelFor(type, details) {
+    const map = {
+      'person_detected': 'PERSON DETECTED', 'vehicle_detected': 'VEHICLE DETECTED',
+      'gun_detected': 'WEAPON DETECTED', 'weapon_detected': 'WEAPON DETECTED',
+      'intrusion': 'ZONE INTRUSION', 'crawling': 'SUSPICIOUS: CRAWLING', 'climbing': 'SUSPICIOUS: CLIMBING',
+      'sudden_approach': 'SUSPICIOUS: FAST APPROACH', 'erratic_movement': 'SUSPICIOUS: ERRATIC MOVEMENT',
+      'loitering': 'LOITERING DETECTED', 'unrecognized_face': 'UNRECOGNIZED FACE', 'face_detected': 'FACE DETECTED',
+      'vehicle_plate_read': 'PLATE READ', 'unrecognized_vehicle': 'UNRECOGNIZED VEHICLE',
+      'night_motion': 'NIGHT MOVEMENT (UNCONFIRMED)', 'night_intrusion': 'NIGHT INTRUSION (CONFIRMED)',
+      'known_person_seen': 'KNOWN PERSON SEEN',
+    };
+    let label = map[type] || type.toUpperCase();
+    if ((type === 'vehicle_detected' || type === 'weapon_detected' || type === 'gun_detected') && details && details.class_name) {
+      label += `: ${details.class_name.toUpperCase()}`;
+    }
+    return label;
+  }
+
+  function scoreColor(score) {
+    if (score >= 80) return '#ff3b3b';
+    if (score >= 60) return '#ff9d2e';
+    if (score >= 35) return '#ffd23f';
+    return '#5f7080';
+  }
+
+  function renderAlert(alert, prepend = true) {
+    if (emptyState) emptyState.remove();
+    const item = document.createElement('div');
+    item.className = 'alert-item';
+    const d = alert.details || {};
+    let detailText = `Cam: <b>${alert.camera_id}</b>`;
+    if (d.class_name) detailText += ` · Object: <b>${d.class_name}</b>`;
+    if (d.track_id !== undefined && d.track_id !== null) detailText += ` · Track #<b>${d.track_id}</b>`;
+    if (d.zone) detailText += ` · Zone: <b>${d.zone}</b>`;
+    if (d.confidence) detailText += ` · Conf: <b>${(d.confidence * 100).toFixed(0)}%</b>`;
+    if (d.extra) detailText += ` · Duration: <b>${d.extra}s</b>`;
+    if (d.plate_text) detailText += ` · Plate: <b>${d.plate_text}</b>`;
+
+    const score = alert.threat_score ?? 0;
+    const scoreBadge = `<span title="Threat score" style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:${scoreColor(score)};border:1px solid ${scoreColor(score)};border-radius:3px;padding:1px 6px;margin-left:6px;">${score}</span>`;
+
+    item.innerHTML = `
+      <div class="severity-bar ${alert.severity}"></div>
+      <div class="alert-body">
+        <div class="alert-top-row">
+          <span class="alert-type ${alert.severity}">${iconFor(alert.event_type)} ${labelFor(alert.event_type, d)}${scoreBadge}</span>
+          <span class="alert-time">${fmtTime(alert.timestamp)}</span>
+        </div>
+        <div class="alert-detail">${detailText}</div>
+      </div>`;
+    if (prepend) alertList.insertBefore(item, alertList.firstChild); else alertList.appendChild(item);
+    totalAlerts++;
+    alertCountBadge.textContent = totalAlerts;
+    document.getElementById('stat-alerts').textContent = totalAlerts;
+    playAlertTone(alert);
+  }
+
+  // Only show alerts belonging to the upload job we're currently watching --
+  // this page can otherwise receive every camera's alerts over the same socket.
+  socket.on('new_alert', (alert) => {
+    if (activeCameraId && alert.camera_id === activeCameraId) renderAlert(alert, true);
+  });
+
+  function resetAlerts() {
+    alertList.innerHTML = '<div class="empty-state" id="empty-state">ANALYZING — DETECTIONS WILL APPEAR HERE</div>';
+    totalAlerts = 0;
+    alertCountBadge.textContent = 0;
+  }
+
+  // ================================
+  // UPLOAD FLOW
+  // ================================
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('file-input');
+  const selectedFileBox = document.getElementById('selected-file');
+  const analyzeBtn = document.getElementById('analyze-btn');
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressFill = document.getElementById('progress-fill');
+  const progressText = document.getElementById('progress-text');
+  const progressPct = document.getElementById('progress-pct');
+  const videoWrap = document.getElementById('video-wrap');
+  const videoImg = document.getElementById('video-feed-img');
+  const telemetryBar = document.getElementById('telemetry-bar');
+  const statusPill = document.getElementById('status-pill');
+  let selectedFile = null;
+  let pollTimer = null;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) selectFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files.length) selectFile(fileInput.files[0]); });
+
+  function selectFile(file) {
+    selectedFile = file;
+    document.getElementById('selected-file-name').textContent = '📹 ' + file.name;
+    document.getElementById('selected-file-size').textContent = (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+    selectedFileBox.style.display = 'flex';
+    analyzeBtn.style.display = 'block';
+  }
+
+  analyzeBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = 'UPLOADING…';
+    progressWrap.style.display = 'block';
+    progressFill.className = 'progress-fill indeterminate';
+    progressText.textContent = 'Uploading file…';
+    progressPct.textContent = '';
+
+    const formData = new FormData();
+    formData.append('video', selectedFile);
+
+    try {
+      const res = await fetch('/api/upload_video', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+      activeCameraId = data.camera_id;
+      resetAlerts();
+      videoImg.src = data.video_feed_url + `?t=${Date.now()}`;
+      videoWrap.style.display = 'flex';
+      telemetryBar.style.display = 'grid';
+      analyzeBtn.style.display = 'none';
+      dropzone.style.display = 'none';
+      selectedFileBox.style.display = 'none';
+      setStatus('processing', 'PROCESSING');
+      pollProgress(data.stats_url);
+    } catch (e) {
+      progressText.textContent = 'Error: ' + e.message;
+      progressFill.style.display = 'none';
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = '▶ RUN DETECTION ON THIS VIDEO';
+    }
+  });
+
+  function setStatus(kind, text) {
+    statusPill.className = 'status-pill ' + kind;
+    statusPill.textContent = text;
+    statusPill.style.display = 'inline-flex';
+  }
+
+  function pollProgress(statsUrl) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch(statsUrl);
+        const s = await res.json();
+        document.getElementById('stat-fps').textContent = s.fps ?? '—';
+        document.getElementById('stat-tracks').textContent = s.active_tracks ?? '—';
+        document.getElementById('stat-frames').textContent = s.frame_count ?? '—';
+
+        const total = s.total_frames || 0;
+        const done = s.raw_frame_pos ?? s.frame_count ?? 0;
+        if (total > 0) {
+          const pct = Math.min(100, Math.round((done / total) * 100));
+          progressFill.className = 'progress-fill';
+          progressFill.style.width = pct + '%';
+          progressText.textContent = `Frame ${done} / ${total}`;
+          progressPct.textContent = pct + '%';
+        } else {
+          progressText.textContent = `Frame ${done}`;
+        }
+
+        if (s.status === 'completed') {
+          clearInterval(pollTimer);
+          setStatus('completed', '✓ ANALYSIS COMPLETE');
+          progressFill.className = 'progress-fill';
+          progressFill.style.width = '100%';
+          progressText.textContent = 'Done';
+          progressPct.textContent = '100%';
+          loadPastJobs();
+        } else if (s.status === 'error') {
+          clearInterval(pollTimer);
+          setStatus('error', '✕ ERROR');
+          progressText.textContent = s.error || 'Processing failed';
+        }
+      } catch (e) { /* ignore transient poll failures */ }
+    }, 1000);
+  }
+
+  // ================================
+  // PAST JOBS
+  // ================================
+  async function loadPastJobs() {
+    try {
+      const res = await fetch('/api/uploads');
+      const jobs = await res.json();
+      const list = document.getElementById('past-jobs-list');
+      const wrap = document.getElementById('past-jobs');
+      if (jobs.length === 0) { wrap.style.display = 'none'; return; }
+      wrap.style.display = 'block';
+      list.innerHTML = '';
+      jobs.slice(0, 8).forEach(job => {
+        const row = document.createElement('div');
+        row.className = 'job-row';
+        const statusColor = job.status === 'completed' ? 'var(--accent)' : job.status === 'error' ? 'var(--critical)' : 'var(--medium)';
+        row.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;">${job.original_filename || job.camera_id}</span><span style="color:${statusColor}">${job.status}</span>`;
+        row.addEventListener('click', () => {
+          activeCameraId = job.camera_id;
+          resetAlerts();
+          videoImg.src = `/video_feed/${job.camera_id}?t=${Date.now()}`;
+          videoWrap.style.display = 'flex';
+          telemetryBar.style.display = 'grid';
+          progressWrap.style.display = 'block';
+          setStatus(job.status === 'completed' ? 'completed' : job.status === 'error' ? 'error' : 'processing',
+                     job.status === 'completed' ? '✓ ANALYSIS COMPLETE' : job.status.toUpperCase());
+          pollProgress(`/api/camera_status/${job.camera_id}`);
+        });
+        list.appendChild(row);
+      });
+    } catch (e) { /* ignore */ }
+  }
+  loadPastJobs();
+
+  function tickClock() {
+    document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', { hour12: false });
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+</script>
+</body>
+</html>

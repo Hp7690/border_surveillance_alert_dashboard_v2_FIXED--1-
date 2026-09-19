@@ -15,10 +15,13 @@ This is intentionally decoupled from the video/detection code -- any
 detection module just calls alert_manager.raise_alert(...).
 """
 
+import os
 import time
 import uuid
 from collections import deque
 from threading import Lock
+
+from core.threat_score import compute_base_score
 
 # Priority ordering: lower number = more urgent
 PRIORITY = {
@@ -49,6 +52,21 @@ PRIORITY = {
 }
 
 
+# ---- Evidence-ledger policy (see core/ledger.py) ----
+# Every CRITICAL/HIGH alert is sealed into the tamper-evident ledger, plus
+# the identity-related MEDIUM types below. Chatty demo alerts
+# (person_detected / vehicle_detected / night_motion) are NOT sealed -- they
+# would bloat the chain without adding evidentiary value.
+LEDGER_SEVERITIES = {"CRITICAL", "HIGH"}
+# type -> minimum seconds between ledger entries for the same (type, camera, track)
+LEDGER_EXTRA_TYPES = {
+    "face_detected": 30,
+    "unrecognized_face": 30,
+    "known_person_seen": 60,   # whitelist face-match, raised via log_silent()
+    "vehicle_plate_read": 30,
+}
+
+
 class Alert:
     def __init__(self, event_type, camera_id, details):
         self.id = str(uuid.uuid4())
@@ -58,6 +76,7 @@ class Alert:
         self.details = details
         self.timestamp = time.time()
         self.acknowledged = False
+        self.threat_score = 0  # set by AlertManager.raise_alert() -- see core/threat_score.py
 
     def to_dict(self):
         return {
@@ -68,6 +87,7 @@ class Alert:
             "details": self.details,
             "timestamp": self.timestamp,
             "acknowledged": self.acknowledged,
+            "threat_score": self.threat_score,
         }
 
 
@@ -79,18 +99,64 @@ class AlertManager:
     the socketio push) stays the same.
     """
 
-    def __init__(self, socketio=None, max_history=500, event_logger=None, webhook_manager=None):
+    def __init__(self, socketio=None, max_history=500, event_logger=None, webhook_manager=None, ledger=None):
         self.socketio = socketio  # Flask-SocketIO instance, set by app.py
         self.event_logger = event_logger  # core.event_log.EventLogger, set by app.py
         self.webhook_manager = webhook_manager  # core.webhooks.WebhookManager, set by app.py
+        self.ledger = ledger  # core.ledger.EvidenceLedger, set by app.py (tamper-evident chain of custody)
+        self.ledger_failures = 0  # surfaced on /api/ledger/status -- a silent gap in the chain matters
+        self._ledger_last = {}
         self._history = deque(maxlen=max_history)
         self._lock = Lock()
         # Simple cooldown so the same event type from the same camera
         # doesn't spam the dashboard every frame.
         self._last_fired = {}
         self._cooldown_seconds = 5
+        # Rolling per-track alert timestamps, used ONLY to compute the
+        # threat-score "repeat behaviour" bonus below -- a track that
+        # keeps triggering alerts in a short window (e.g. repeated
+        # fence intrusions, or lingering after a first sighting) is
+        # more concerning than a single one-off event, even at the
+        # same nominal severity.
+        self._track_history = {}
+        self._REPEAT_WINDOW_SECONDS = 300  # 5 minutes
+        self._REPEAT_BONUS_PER_HIT = 3
+        self._REPEAT_BONUS_MAX = 15
 
-    def raise_alert(self, event_type, camera_id, details=None, frame=None):
+    def _repeat_bonus(self, track_id):
+        if track_id is None:
+            return 0
+        now = time.time()
+        times = self._track_history.setdefault(track_id, [])
+        times[:] = [t for t in times if now - t <= self._REPEAT_WINDOW_SECONDS]
+        times.append(now)
+        repeats_beyond_first = max(0, len(times) - 1)
+        return min(self._REPEAT_BONUS_MAX, repeats_beyond_first * self._REPEAT_BONUS_PER_HIT)
+
+    def _seal(self, alert, snapshot_file):
+        """Write this alert (and its snapshot hash) into the evidence ledger.
+        Must NEVER raise into the detection pipeline -- but failures are counted
+        and exposed so a gap in the chain is visible, not silent."""
+        if self.ledger is None:
+            return
+        min_gap = LEDGER_EXTRA_TYPES.get(alert.event_type)
+        if alert.severity not in LEDGER_SEVERITIES and min_gap is None:
+            return
+        if min_gap is not None and alert.severity not in LEDGER_SEVERITIES:
+            key = (alert.event_type, alert.camera_id, alert.details.get("track_id"))
+            if alert.timestamp - self._ledger_last.get(key, 0) < min_gap:
+                return
+            self._ledger_last[key] = alert.timestamp
+        try:
+            snap_path = None
+            if snapshot_file and self.event_logger is not None:
+                snap_path = os.path.join(self.event_logger.snapshot_dir, snapshot_file)
+            self.ledger.record_alert(alert.to_dict(), snapshot_path=snap_path)
+        except Exception as e:
+            self.ledger_failures += 1
+            print(f"[ALERT][LEDGER ERROR] could not seal alert {alert.id}: {e}")
+
+    def raise_alert(self, event_type, camera_id, details=None, frame=None, is_night=False):
         details = details or {}
         cooldown_key = (event_type, camera_id, details.get("track_id"))
         now = time.time()
@@ -102,6 +168,8 @@ class AlertManager:
             self._last_fired[cooldown_key] = now
 
             alert = Alert(event_type, camera_id, details)
+            base_score = compute_base_score(event_type, alert.severity, details, is_night=is_night)
+            alert.threat_score = min(100, base_score + self._repeat_bonus(details.get("track_id")))
             self._history.append(alert)
 
         # Push to every connected admin dashboard in real time.
@@ -110,8 +178,12 @@ class AlertManager:
 
         # Persist to disk (SQLite row + JPEG snapshot) so it survives a
         # restart and shows up in incident history/review.
+        snapshot_file = None
         if self.event_logger is not None:
-            self.event_logger.log(alert.to_dict(), frame=frame)
+            snapshot_file = self.event_logger.log(alert.to_dict(), frame=frame)
+
+        # Seal into the tamper-evident evidence ledger (hash of alert + snapshot).
+        self._seal(alert, snapshot_file)
 
         # Push to any registered external systems (C2 platform, SIEM,
         # Slack/Teams bridge, ticketing system, etc.) -- see core/webhooks.py.
@@ -141,8 +213,11 @@ class AlertManager:
             self._last_fired[cooldown_key] = now
             alert = Alert(event_type, camera_id, details)
 
+        snapshot_file = None
         if self.event_logger is not None:
-            self.event_logger.log(alert.to_dict(), frame=frame)
+            snapshot_file = self.event_logger.log(alert.to_dict(), frame=frame)
+
+        self._seal(alert, snapshot_file)
 
         return alert
 

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IBVAP — Analytics</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="/static/js/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e13;
+    --panel: #10161d;
+    --panel-raised: #151d26;
+    --grid-line: #1d2731;
+    --text-primary: #dce4ea;
+    --text-muted: #5f7080;
+    --text-dim: #3d4a57;
+    --accent: #35d68a;
+    --accent-dim: #1d6e49;
+    --critical: #ff3b3b;
+    --high: #ff9d2e;
+    --medium: #ffd23f;
+    --low: #5f7080;
+    --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-attachment: fixed;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; border-bottom: 1px solid var(--grid-line);
+    background: linear-gradient(180deg, rgba(16,22,29,0.95), rgba(16,22,29,0.75));
+  }
+  .brand-text .title { font-family: var(--font-mono); font-weight: 700; font-size: 15px; letter-spacing: 0.08em; }
+  .brand-text .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  header .nav-links { display: flex; gap: 10px; align-items: center; }
+  header a.nav-link {
+    font-family: var(--font-mono); font-size: 12px; color: var(--accent);
+    text-decoration: none; border: 1px solid var(--accent-dim); padding: 7px 14px;
+    border-radius: 4px; letter-spacing: 0.04em;
+  }
+  header a.nav-link:hover { background: var(--accent-dim); }
+  header a.nav-link.muted { color: var(--text-muted); border-color: var(--grid-line); }
+
+  main { padding: 20px 24px; max-width: 1300px; margin: 0 auto; }
+
+  .cards-row {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 14px; margin-bottom: 20px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--grid-line); border-radius: 6px;
+    padding: 16px 18px;
+  }
+  .card .label { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); letter-spacing: 0.05em; }
+  .card .value { font-family: var(--font-mono); font-size: 26px; font-weight: 700; color: var(--accent); margin-top: 6px; }
+  .card .value.small { font-size: 16px; color: var(--text-primary); }
+
+  .charts-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  .charts-grid .full-width { grid-column: 1 / -1; }
+  .chart-panel {
+    background: var(--panel); border: 1px solid var(--grid-line); border-radius: 6px;
+    padding: 16px 18px;
+  }
+  .chart-panel h3 {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);
+    letter-spacing: 0.05em; margin-bottom: 12px; font-weight: 600;
+  }
+  .chart-panel .canvas-wrap { position: relative; height: 260px; }
+
+  .range-toggle { display: flex; gap: 6px; margin-bottom: 18px; }
+  .range-toggle button {
+    background: var(--panel-raised); border: 1px solid var(--grid-line); color: var(--text-muted);
+    font-family: var(--font-mono); font-size: 11px; padding: 6px 14px; border-radius: 4px; cursor: pointer;
+  }
+  .range-toggle button.active { background: var(--accent-dim); color: var(--text-primary); border-color: var(--accent); }
+
+  @media (max-width: 800px) {
+    .charts-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand-text">
+    <div class="title">IBVAP — ANALYTICS</div>
+    <div class="subtitle">Alert volume &amp; trend analysis</div>
+  </div>
+  <div class="nav-links">
+    <a class="nav-link" href="/">&larr; Live Dashboard</a>
+    <a class="nav-link" href="/history">History</a>
+    <a class="nav-link" href="/ledger">Evidence Ledger</a>
+    <a class="nav-link" href="/upload">Upload Video</a>
+    {% if current_user %}<a class="nav-link muted" href="/logout">Logout</a>{% endif %}
+  </div>
+</header>
+
+<main>
+  <div class="range-toggle" id="range-toggle">
+    <button data-days="1">Today</button>
+    <button data-days="7" class="active">Last 7 Days</button>
+    <button data-days="30">Last 30 Days</button>
+  </div>
+
+  <div class="cards-row" id="summary-cards">
+    <div class="card"><div class="label">TODAY</div><div class="value" id="s-today">—</div></div>
+    <div class="card"><div class="label">LAST 7 DAYS</div><div class="value" id="s-week">—</div></div>
+    <div class="card"><div class="label">ALL-TIME TOTAL</div><div class="value" id="s-total">—</div></div>
+    <div class="card"><div class="label">TOP EVENT TYPE</div><div class="value small" id="s-toptype">—</div></div>
+    <div class="card"><div class="label">BUSIEST CAMERA</div><div class="value small" id="s-camera">—</div></div>
+    <div class="card"><div class="label">PEAK HOUR</div><div class="value small" id="s-hour">—</div></div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-panel full-width">
+      <h3>ALERTS OVER TIME</h3>
+      <div class="canvas-wrap"><canvas id="chart-timeseries"></canvas></div>
+    </div>
+    <div class="chart-panel">
+      <h3>ALERTS BY EVENT TYPE</h3>
+      <div class="canvas-wrap"><canvas id="chart-bytype"></canvas></div>
+    </div>
+    <div class="chart-panel">
+      <h3>PEAK ACTIVITY HOURS (24H)</h3>
+      <div class="canvas-wrap"><canvas id="chart-byhour"></canvas></div>
+    </div>
+    <div class="chart-panel full-width" id="camera-panel" style="display:none;">
+      <h3>ALERTS BY CAMERA</h3>
+      <div class="canvas-wrap"><canvas id="chart-bycamera"></canvas></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  const COLORS = {
+    accent: '#35d68a', critical: '#ff3b3b', high: '#ff9d2e', medium: '#ffd23f',
+    low: '#5f7080', gridline: '#1d2731', text: '#5f7080',
+  };
+  Chart.defaults.color = COLORS.text;
+  Chart.defaults.font.family = "'IBM Plex Mono', monospace";
+  Chart.defaults.font.size = 11;
+
+  let currentDays = 7;
+  let charts = {};
+
+  function labelFor(type) {
+    return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  function destroyIfExists(key) {
+    if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+  }
+
+  async function loadSummary() {
+    const res = await fetch('/api/analytics/summary');
+    const s = await res.json();
+    document.getElementById('s-today').textContent = s.today_count ?? 0;
+    document.getElementById('s-week').textContent = s.week_count ?? 0;
+    document.getElementById('s-total').textContent = s.total_count ?? 0;
+    document.getElementById('s-toptype').textContent = s.top_event_type ? labelFor(s.top_event_type) : '—';
+    document.getElementById('s-camera').textContent = s.busiest_camera ?? '—';
+    document.getElementById('s-hour').textContent = (s.busiest_hour !== null && s.busiest_hour !== undefined)
+      ? `${String(s.busiest_hour).padStart(2, '0')}:00` : '—';
+  }
+
+  async function loadTimeseries(days) {
+    const bucket = days <= 2 ? 'hour' : 'day';
+    const res = await fetch(`/api/analytics/timeseries?bucket=${bucket}&days=${days}`);
+    const data = await res.json();
+    destroyIfExists('timeseries');
+    const ctx = document.getElementById('chart-timeseries');
+    charts.timeseries = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(d => d.bucket),
+        datasets: [{
+          label: 'Alerts', data: data.map(d => d.count),
+          borderColor: COLORS.accent, backgroundColor: 'rgba(53,214,138,0.12)',
+          fill: true, tension: 0.3, pointRadius: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: COLORS.gridline } },
+          y: { beginAtZero: true, grid: { color: COLORS.gridline }, ticks: { precision: 0 } },
+        },
+      },
+    });
+  }
+
+  async function loadByType(days) {
+    const res = await fetch(`/api/analytics/by_type?days=${days}`);
+    const data = await res.json();
+    destroyIfExists('bytype');
+    const ctx = document.getElementById('chart-bytype');
+    charts.bytype = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.map(d => labelFor(d.event_type)),
+        datasets: [{ data: data.map(d => d.count), backgroundColor: COLORS.accent }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, grid: { color: COLORS.gridline }, ticks: { precision: 0 } },
+          y: { grid: { display: false } },
+        },
+      },
+    });
+  }
+
+  async function loadByHour(days) {
+    const res = await fetch(`/api/analytics/by_hour?days=${days}`);
+    const data = await res.json(); // array of 24 ints
+    destroyIfExists('byhour');
+    const ctx = document.getElementById('chart-byhour');
+    charts.byhour = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.map((_, h) => String(h).padStart(2, '0')),
+        datasets: [{ data: data, backgroundColor: COLORS.high }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero: true, grid: { color: COLORS.gridline }, ticks: { precision: 0 } },
+        },
+      },
+    });
+  }
+
+  async function loadByCamera(days) {
+    const res = await fetch(`/api/analytics/by_camera?days=${days}`);
+    const data = await res.json();
+    const panel = document.getElementById('camera-panel');
+    if (data.length <= 1) { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+    destroyIfExists('bycamera');
+    const ctx = document.getElementById('chart-bycamera');
+    charts.bycamera = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: data.map(d => d.camera_id),
+        datasets: [{ data: data.map(d => d.count), backgroundColor: COLORS.medium }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero: true, grid: { color: COLORS.gridline }, ticks: { precision: 0 } },
+        },
+      },
+    });
+  }
+
+  async function loadAll(days) {
+    currentDays = days;
+    await Promise.all([loadTimeseries(days), loadByType(days), loadByHour(days), loadByCamera(days)]);
+  }
+
+  document.getElementById('range-toggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    document.querySelectorAll('#range-toggle button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadAll(parseInt(btn.dataset.days, 10));
+  });
+
+  loadSummary();
+  loadAll(currentDays);
+  setInterval(() => { loadSummary(); loadAll(currentDays); }, 30000); // refresh every 30s
+</script>
+</body>
+</html>

@@ -64,11 +64,22 @@ class EventLogger:
                     camera_id TEXT NOT NULL,
                     description TEXT NOT NULL,
                     details_json TEXT NOT NULL,
-                    snapshot_path TEXT
+                    snapshot_path TEXT,
+                    threat_score INTEGER DEFAULT 0,
+                    clip_path TEXT
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type)")
+
+            # Migration: older databases created before threat_score/
+            # clip_path existed won't have these columns -- add them if
+            # missing so upgrading doesn't require deleting existing history.
+            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+            if "threat_score" not in existing_cols:
+                conn.execute("ALTER TABLE events ADD COLUMN threat_score INTEGER DEFAULT 0")
+            if "clip_path" not in existing_cols:
+                conn.execute("ALTER TABLE events ADD COLUMN clip_path TEXT")
 
     @staticmethod
     def _describe(event_type, details):
@@ -126,18 +137,36 @@ class EventLogger:
             with self._lock, self._connect() as conn:
                 conn.execute(
                     "INSERT INTO events (id, ts, date, time, event_type, severity, camera_id, "
-                    "description, details_json, snapshot_path) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "description, details_json, snapshot_path, threat_score) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         alert_id, ts, date_str, time_str,
                         alert_dict["event_type"], alert_dict["severity"], alert_dict["camera_id"],
                         description, json.dumps(alert_dict.get("details") or {}), snapshot_path,
+                        alert_dict.get("threat_score", 0),
                     ),
                 )
         except Exception as e:
             print(f"[EventLogger] Failed to write event to DB: {e}")
 
+        # Returned so the evidence ledger (core/ledger.py) can hash the exact
+        # file that was written. Existing callers ignore the return value.
+        return snapshot_path
+
+    def set_clip_path(self, alert_id, filename):
+        """
+        Called after a video clip finishes encoding (a few seconds
+        AFTER the initial log() call, since clip encoding needs to wait
+        for the post-alert recording window to elapse) to attach it to
+        the already-logged event row.
+        """
+        try:
+            with self._lock, self._connect() as conn:
+                conn.execute("UPDATE events SET clip_path = ? WHERE id = ?", (filename, alert_id))
+        except Exception as e:
+            print(f"[EventLogger] Failed to attach clip path: {e}")
+
     def query(self, limit=100, event_type=None, severity=None, camera_id=None,
-              start_ts=None, end_ts=None):
+              start_ts=None, end_ts=None, min_score=None):
         """Returns most-recent-first list of event dicts, with optional filters."""
         clauses, params = [], []
         if event_type:
@@ -155,10 +184,13 @@ class EventLogger:
         if end_ts is not None:
             clauses.append("ts <= ?")
             params.append(end_ts)
+        if min_score is not None:
+            clauses.append("threat_score >= ?")
+            params.append(min_score)
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = (f"SELECT id, ts, date, time, event_type, severity, camera_id, description, "
-               f"details_json, snapshot_path FROM events {where} ORDER BY ts DESC LIMIT ?")
+               f"details_json, snapshot_path, threat_score, clip_path FROM events {where} ORDER BY ts DESC LIMIT ?")
         params.append(limit)
 
         with self._lock, self._connect() as conn:
@@ -170,6 +202,8 @@ class EventLogger:
                 "event_type": r[4], "severity": r[5], "camera_id": r[6],
                 "description": r[7], "details": json.loads(r[8]),
                 "snapshot_url": f"/snapshots/{r[9]}" if r[9] else None,
+                "threat_score": r[10],
+                "clip_url": f"/clips/{r[11]}" if r[11] else None,
             }
             for r in rows
         ]
@@ -177,3 +211,103 @@ class EventLogger:
     def count(self):
         with self._lock, self._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    # ================================
+    # ANALYTICS AGGREGATIONS
+    # ================================
+    # All of these run as SQL GROUP BY queries (SQLite handles the
+    # local-time bucketing via strftime('...', ts, 'unixepoch',
+    # 'localtime')) rather than pulling every row into Python -- cheap
+    # even as the event log grows into the tens of thousands of rows.
+
+    def stats_by_type(self, start_ts=None, camera_id=None):
+        """[{'event_type':..., 'count':...}, ...] sorted busiest-first."""
+        clauses, params = [], []
+        if start_ts is not None:
+            clauses.append("ts >= ?"); params.append(start_ts)
+        if camera_id:
+            clauses.append("camera_id = ?"); params.append(camera_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT event_type, COUNT(*) FROM events {where} GROUP BY event_type ORDER BY COUNT(*) DESC"
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [{"event_type": r[0], "count": r[1]} for r in rows]
+
+    def stats_by_camera(self, start_ts=None):
+        """[{'camera_id':..., 'count':...}, ...] sorted busiest-first."""
+        clauses, params = [], []
+        if start_ts is not None:
+            clauses.append("ts >= ?"); params.append(start_ts)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT camera_id, COUNT(*) FROM events {where} GROUP BY camera_id ORDER BY COUNT(*) DESC"
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [{"camera_id": r[0], "count": r[1]} for r in rows]
+
+    def stats_by_hour(self, start_ts=None, camera_id=None):
+        """Returns a list of 24 ints (index = local hour 0-23) -- for a
+        'what time of day do most events happen' peak-activity chart."""
+        clauses, params = [], []
+        if start_ts is not None:
+            clauses.append("ts >= ?"); params.append(start_ts)
+        if camera_id:
+            clauses.append("camera_id = ?"); params.append(camera_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = (f"SELECT CAST(strftime('%H', ts, 'unixepoch', 'localtime') AS INTEGER), COUNT(*) "
+               f"FROM events {where} GROUP BY 1")
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        counts = [0] * 24
+        for hr, cnt in rows:
+            if hr is not None:
+                counts[hr] = cnt
+        return counts
+
+    def timeseries(self, bucket="day", days=7, camera_id=None):
+        """
+        [{'bucket': '2026-09-01', 'count': N}, ...] for a line chart of
+        alert volume over time. bucket: 'day' or 'hour'.
+        """
+        cutoff = time.time() - days * 86400
+        fmt = "%Y-%m-%d" if bucket == "hour" else "%Y-%m-%d"
+        # For hourly resolution include the hour in the bucket key too.
+        fmt = "%Y-%m-%d %H:00" if bucket == "hour" else "%Y-%m-%d"
+        clauses, params = ["ts >= ?"], [cutoff]
+        if camera_id:
+            clauses.append("camera_id = ?"); params.append(camera_id)
+        where = f"WHERE {' AND '.join(clauses)}"
+        sql = (f"SELECT strftime('{fmt}', ts, 'unixepoch', 'localtime') AS b, COUNT(*) "
+               f"FROM events {where} GROUP BY b ORDER BY b")
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [{"bucket": r[0], "count": r[1]} for r in rows]
+
+    def summary(self):
+        """One-shot dict of headline numbers for the analytics page's
+        summary cards: today/week/all-time totals, busiest camera,
+        top event type, and busiest hour of day."""
+        now = time.time()
+        local_now = time.localtime(now)
+        midnight = time.mktime((local_now.tm_year, local_now.tm_mon, local_now.tm_mday, 0, 0, 0, 0, 0, -1))
+        week_start = midnight - 6 * 86400  # last 7 days including today
+
+        def _count_since(ts):
+            with self._lock, self._connect() as conn:
+                return conn.execute("SELECT COUNT(*) FROM events WHERE ts >= ?", (ts,)).fetchone()[0]
+
+        by_type = self.stats_by_type()
+        by_camera = self.stats_by_camera()
+        by_hour = self.stats_by_hour()
+
+        top_event_type = by_type[0]["event_type"] if by_type else None
+        busiest_camera = by_camera[0]["camera_id"] if by_camera else None
+        busiest_hour = max(range(24), key=lambda h: by_hour[h]) if any(by_hour) else None
+
+        return {
+            "today_count": _count_since(midnight),
+            "week_count": _count_since(week_start),
+            "total_count": self.count(),
+            "top_event_type": top_event_type,
+            "busiest_camera": busiest_camera,
+            "busiest_hour": busiest_hour,
+        }

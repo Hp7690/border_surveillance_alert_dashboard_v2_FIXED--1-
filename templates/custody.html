@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IBVAP — Evidence Ledger</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e13; --panel: #10161d; --panel-raised: #151d26; --grid-line: #1d2731;
+    --text-primary: #dce4ea; --text-muted: #5f7080; --text-dim: #3d4a57;
+    --accent: #35d68a; --accent-dim: #1d6e49;
+    --critical: #ff3b3b; --high: #ff9d2e; --medium: #ffd23f; --low: #5f7080;
+    --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text-primary); font-family: var(--font-sans); min-height: 100vh;
+    background-image: linear-gradient(var(--grid-line) 1px, transparent 1px), linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px; background-attachment: fixed; }
+  header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    padding: 14px 24px; border-bottom: 1px solid var(--grid-line);
+    background: linear-gradient(180deg, rgba(16,22,29,0.95), rgba(16,22,29,0.75)); }
+  .title { font-family: var(--font-mono); font-weight: 700; font-size: 15px; letter-spacing: 0.08em; }
+  .subtitle { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .nav a { font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-decoration: none;
+    border: 1px solid var(--accent-dim); padding: 7px 14px; border-radius: 4px; margin-left: 8px; }
+  .nav a:hover { background: var(--accent-dim); }
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--grid-line); border-radius: 6px; }
+  .statusbar { display: flex; gap: 22px; flex-wrap: wrap; align-items: center; padding: 14px 16px; margin-bottom: 18px; }
+  .stat .k { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .stat .v { font-family: var(--font-mono); font-size: 13px; margin-top: 2px; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .list { max-height: 78vh; overflow-y: auto; }
+  .item { padding: 11px 14px; border-bottom: 1px solid var(--grid-line); cursor: pointer; display: flex; gap: 10px; }
+  .item:hover, .item.sel { background: var(--panel-raised); }
+  .dot { width: 8px; border-radius: 2px; flex: none; }
+  .dot.CRITICAL { background: var(--critical); } .dot.HIGH { background: var(--high); }
+  .dot.MEDIUM { background: var(--medium); } .dot.LOW { background: var(--low); }
+  .item .t { font-size: 13px; font-weight: 600; } .item .m { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+  .chip { font-family: var(--font-mono); font-size: 9px; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--grid-line); color: var(--text-muted); margin-left: 4px; }
+  .chip.ok { color: var(--accent); border-color: var(--accent-dim); }
+  .btn { font-family: var(--font-mono); font-size: 12px; color: var(--accent); background: transparent; border: 1px solid var(--accent-dim);
+    padding: 7px 14px; border-radius: 4px; cursor: pointer; }
+  .btn:hover { background: var(--accent-dim); } .btn:disabled { opacity: .5; cursor: default; }
+  .btn.warn { color: var(--high); border-color: #7a4a12; } .btn.warn:hover { background: #7a4a12; }
+  .detail { padding: 18px; }
+  .detail h2 { font-family: var(--font-mono); font-size: 14px; letter-spacing: .05em; margin-bottom: 4px; }
+  .idline { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); word-break: break-all; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+  select, input[type=text] { background: var(--panel-raised); border: 1px solid var(--grid-line); color: var(--text-primary);
+    font-family: var(--font-mono); font-size: 12px; padding: 7px 10px; border-radius: 4px; }
+  input[type=text] { flex: 1; min-width: 180px; }
+  .evid { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 6px; }
+  .evid .box { flex: 1; min-width: 240px; background: var(--panel-raised); border: 1px solid var(--grid-line); border-radius: 5px; padding: 10px; }
+  .evid img, .evid video { width: 100%; border-radius: 3px; background: #000; display: block; margin-bottom: 8px; }
+  .verdict { font-family: var(--font-mono); font-size: 11px; }
+  .OK { color: var(--accent); } .TAMPERED, .MISSING, .FAIL { color: var(--critical); font-weight: 700; } .NOT_SEALED { color: var(--text-muted); }
+  .timeline { margin-top: 12px; border-left: 2px solid var(--grid-line); padding-left: 16px; }
+  .ev { position: relative; padding: 0 0 16px 0; }
+  .ev::before { content: ''; position: absolute; left: -22px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .ev.SYSTEM::before { background: var(--text-muted); box-shadow: none; }
+  .ev .h { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+  .ev .w { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+  .ev .n { font-size: 13px; margin-top: 4px; }
+  .ev .hash { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 3px; word-break: break-all; }
+  .banner { padding: 10px 14px; border-radius: 5px; font-family: var(--font-mono); font-size: 12px; margin-bottom: 14px; display: none; }
+  .banner.ok { display: block; color: var(--accent); border: 1px solid var(--accent-dim); background: rgba(53,214,138,.07); }
+  .banner.bad { display: block; color: var(--critical); border: 1px solid #7a1f1f; background: rgba(255,59,59,.09); }
+  .empty { text-align: center; padding: 50px 20px; color: var(--text-muted); font-family: var(--font-mono); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="title">IBVAP — EVIDENCE LEDGER</div>
+    <div class="subtitle">Tamper-evident chain of custody · hash-chained &amp; Ed25519-signed</div>
+  </div>
+  <div class="nav">
+    <a href="/">&larr; Live Dashboard</a><a href="/history">History</a><a href="/analytics">Analytics</a><a href="/logout">Logout{% if current_user %} ({{ current_user }}){% endif %}</a>
+  </div>
+</header>
+
+<main>
+  <div id="chainBanner" class="banner"></div>
+  <div class="panel statusbar">
+    <div class="stat"><div class="k">Blocks</div><div class="v" id="sBlocks">–</div></div>
+    <div class="stat"><div class="k">Chain head</div><div class="v" id="sHead">–</div></div>
+    <div class="stat"><div class="k">Signing key</div><div class="v" id="sKey">–</div></div>
+    <div class="stat"><div class="k">Seal failures</div><div class="v" id="sFail">–</div></div>
+    <div style="margin-left:auto; display:flex; gap:8px;">
+      <button class="btn" id="btnVerify">Verify entire chain</button>
+      <button class="btn" id="btnAnchor" title="Push current chain head to webhooks / anchor file">Anchor now</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel list" id="list"><div class="empty">Loading…</div></div>
+    <div class="panel detail" id="detail"><div class="empty">Select an alert to see its chain of custody.</div></div>
+  </div>
+</main>
+
+<script>
+const ACTIONS = {{ action_codes | tojson }};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = us => new Date(us / 1000).toLocaleString();
+const short = h => h ? h.slice(0, 10) + '…' + h.slice(-6) : '–';
+const label = t => t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+const j = async (url, opts) => { const r = await fetch(url, opts); let b = {}; try { b = await r.json(); } catch (e) {} if (!r.ok) throw new Error(b.error || r.statusText); return b; };
+
+let selected = new URLSearchParams(location.search).get('alert');
+let refreshedForSelection = false;
+
+async function loadStatus() {
+  try {
+    const s = await j('/api/ledger/status');
+    $('sBlocks').textContent = s.blocks; $('sHead').textContent = '#' + s.head_idx + '  ' + short(s.head_hash);
+    $('sKey').textContent = s.pubkey_fp;
+    $('sFail').textContent = s.seal_failures; $('sFail').style.color = s.seal_failures ? 'var(--critical)' : '';
+  } catch (e) {}
+}
+
+async function loadList() {
+  try {
+    const items = await j('/api/ledger/alerts?limit=150');
+    if (!items.length) { $('list').innerHTML = '<div class="empty">No sealed alerts yet.</div>'; return; }
+    $('list').innerHTML = items.map(a => `
+      <div class="item ${a.alert_id === selected ? 'sel' : ''}" data-id="${esc(a.alert_id)}">
+        <div class="dot ${esc(a.severity)}"></div>
+        <div><div class="t">${esc(label(a.event_type))}</div>
+        <div class="m">${esc(a.camera_id)} · ${fmt(a.ts_us)}</div>
+        <div class="m">score ${a.threat_score}
+          <span class="chip ${a.acknowledged ? 'ok' : ''}">${a.acknowledged ? 'ACKED' : 'UNACKED'}</span>
+          <span class="chip">${a.actions} action${a.actions === 1 ? '' : 's'}</span>
+          <span class="chip">${a.views} view${a.views === 1 ? '' : 's'}</span></div></div>
+      </div>`).join('');
+    document.querySelectorAll('.item').forEach(el => el.onclick = () => select(el.dataset.id));
+  } catch (e) { $('list').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+}
+
+function select(id) { selected = id; refreshedForSelection = false; history.replaceState(null, '', '?alert=' + encodeURIComponent(id)); loadList(); loadDetail(); }
+
+function evidenceBox(kind, info, url) {
+  if (!info || info.status === 'NOT_SEALED') return `<div class="box"><div class="verdict NOT_SEALED">${kind}: not sealed (none captured)</div></div>`;
+  const media = info.status === 'MISSING' ? '' : (kind === 'Snapshot'
+      ? `<img src="${url}" alt="snapshot" onload="onEvidenceLoaded()">`
+      : `<video src="${url}" controls preload="metadata" onplay="onEvidenceLoaded()"></video>`);
+  return `<div class="box">${media}
+    <div class="verdict ${info.status}">${kind}: ${info.status}</div>
+    <div class="idline">sealed&nbsp; ${esc(short(info.expected))}<br>on disk ${esc(short(info.actual))}</div></div>`;
+}
+
+function onEvidenceLoaded() {   // opening evidence is itself a custody event -> refresh the trail once
+  if (refreshedForSelection) return; refreshedForSelection = true; setTimeout(() => loadDetail(true), 800);
+}
+
+async function loadDetail(soft) {
+  if (!selected) return;
+  let d;
+  try { d = await j('/api/ledger/custody/' + encodeURIComponent(selected)); }
+  catch (e) { $('detail').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return; }
+  const raised = d.blocks.find(b => b.entry_type === 'ALERT_RAISED');
+  const clip = d.blocks.find(b => b.entry_type === 'CLIP_SEALED');
+  const p = raised ? raised.payload : {};
+  const acked = d.blocks.some(b => b.entry_type === 'ACKNOWLEDGED');
+  $('detail').innerHTML = `
+    <h2>${esc(label(p.event_type || 'Alert'))} <span class="chip">${esc(p.severity || '')}</span> <span class="chip">${esc(p.camera_id || '')}</span></h2>
+    <div class="idline">alert id ${esc(d.alert_id)}</div>
+    <div class="evid">
+      ${evidenceBox('Snapshot', d.evidence.snapshot, p.snapshot_file ? '/snapshots/' + encodeURIComponent(p.snapshot_file) : '')}
+      ${evidenceBox('Clip', d.evidence.clip, clip ? '/clips/' + encodeURIComponent(clip.payload.clip_file) : '')}
+    </div>
+    <div class="row">
+      <button class="btn" id="btnAck" ${acked ? 'disabled' : ''}>${acked ? 'Acknowledged ✓' : 'Acknowledge'}</button>
+      <select id="actSel">${ACTIONS.map(a => `<option>${a}</option>`).join('')}</select>
+      <input type="text" id="actNote" maxlength="500" placeholder="Note (what was done, who was informed…)">
+      <button class="btn" id="btnAct">Record action</button>
+      <button class="btn warn" id="btnBundle">Download court bundle</button>
+    </div>
+    <div class="timeline">
+      ${d.blocks.map(b => {
+        const pl = b.payload; let note = '';
+        if (b.entry_type === 'ACTION_TAKEN') note = `<b>${esc(pl.action)}</b>${pl.note ? ' — ' + esc(pl.note) : ''}`;
+        else if (b.entry_type === 'VIEWED_EVIDENCE') note = `opened ${esc(pl.artifact)} (${esc(pl.file)})`;
+        else if (b.entry_type === 'ALERT_RAISED') note = `threat score ${pl.threat_score}`;
+        else if (b.entry_type === 'CLIP_SEALED') note = `${esc(pl.clip_file)} · ${pl.clip_bytes} bytes`;
+        return `<div class="ev ${b.actor === 'SYSTEM' ? 'SYSTEM' : ''}">
+          <div class="h">${esc(label(b.entry_type))}</div>
+          <div class="w">${fmt(b.ts_us)} · by <b>${esc(b.actor)}</b>${pl.ip ? ' · ' + esc(pl.ip) : ''}</div>
+          ${note ? `<div class="n">${note}</div>` : ''}
+          <div class="hash">block #${b.idx} · ${esc(short(b.hash))} ← ${esc(short(b.prev_hash))}</div></div>`; }).join('')}
+    </div>`;
+  $('btnAck').onclick = async () => { try { await j(`/api/alerts/${selected}/ack`, {method: 'POST'}); } catch (e) { alert(e.message); } refresh(); };
+  $('btnAct').onclick = async () => {
+    try { await j(`/api/alerts/${selected}/action`, {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: $('actSel').value, note: $('actNote').value})}); } catch (e) { alert(e.message); }
+    refresh(); };
+  $('btnBundle').onclick = () => { location.href = `/api/ledger/bundle/${encodeURIComponent(selected)}`; setTimeout(refresh, 1500); };
+}
+
+$('btnVerify').onclick = async () => {
+  const b = $('chainBanner'); $('btnVerify').disabled = true;
+  try {
+    const r = await j('/api/ledger/verify');
+    if (r.ok) { b.className = 'banner ok'; b.textContent = `CHAIN INTACT — ${r.blocks} blocks re-derived, all signatures valid, ${r.anchors_checked} anchor(s) match. Head #${r.head_idx} ${short(r.head_hash)}`; }
+    else { b.className = 'banner bad'; b.textContent = `TAMPERING DETECTED at block ${r.first_bad_idx ?? '?'} — ${r.reason}`; }
+  } catch (e) { b.className = 'banner bad'; b.textContent = e.message; }
+  $('btnVerify').disabled = false;
+};
+$('btnAnchor').onclick = async () => { try { const a = await j('/api/ledger/anchor', {method: 'POST'}); alert('Anchored block #' + a.idx); } catch (e) { alert(e.message); } };
+
+function refresh() { loadStatus(); loadList(); loadDetail(); }
+refresh(); setInterval(() => { loadStatus(); loadList(); }, 10000);
+</script>
+</body>
+</html>

@@ -258,6 +258,9 @@
     <div class="status-item">CAMERA <span class="status-value">BOP-01</span></div>
     <div class="status-item"><span class="status-dot"></span> SYSTEM NOMINAL</div>
     <a href="/history" style="font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-decoration: none; border: 1px solid var(--accent-dim); padding: 6px 12px; border-radius: 4px;">History &rarr;</a>
+    <a href="/analytics" style="font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-decoration: none; border: 1px solid var(--accent-dim); padding: 6px 12px; border-radius: 4px;">Analytics &rarr;</a>
+    <a href="/upload" style="font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-decoration: none; border: 1px solid var(--accent-dim); padding: 6px 12px; border-radius: 4px;">Upload Video &rarr;</a>
+    <a href="/ledger" style="font-family: var(--font-mono); font-size: 12px; color: var(--accent); text-decoration: none; border: 1px solid var(--accent-dim); padding: 6px 12px; border-radius: 4px;">Evidence Ledger &rarr;</a>
     {% if current_user %}
     <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">{{ current_user }}</span>
     <a href="/logout" style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); text-decoration: none; border: 1px solid var(--grid-line); padding: 6px 12px; border-radius: 4px;">Logout</a>
@@ -421,6 +424,13 @@
     return label;
   }
 
+  function scoreColor(score) {
+    if (score >= 80) return '#ff3b3b';
+    if (score >= 60) return '#ff9d2e';
+    if (score >= 35) return '#ffd23f';
+    return '#5f7080';
+  }
+
   function renderAlert(alert, prepend = true) {
     if (emptyState) emptyState.remove();
 
@@ -437,11 +447,14 @@
     if (d.speed_px_per_sec) detailText += ` · Speed: <b>${d.speed_px_per_sec}px/s</b>`;
     if (d.plate_text) detailText += ` · Plate: <b>${d.plate_text}</b>`;
 
+    const score = alert.threat_score ?? 0;
+    const scoreBadge = `<span title="Threat score" style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:${scoreColor(score)};border:1px solid ${scoreColor(score)};border-radius:3px;padding:1px 6px;margin-left:6px;">${score}</span>`;
+
     item.innerHTML = `
       <div class="severity-bar ${alert.severity}"></div>
       <div class="alert-body">
         <div class="alert-top-row">
-          <span class="alert-type ${alert.severity}">${iconFor(alert.event_type)} ${labelFor(alert.event_type, d)}</span>
+          <span class="alert-type ${alert.severity}">${iconFor(alert.event_type)} ${labelFor(alert.event_type, d)}${scoreBadge}</span>
           <span class="alert-time">${fmtTime(alert.timestamp)}</span>
         </div>
         <div class="alert-detail">${detailText}</div>
@@ -488,7 +501,8 @@
   async function loadCameraTabs() {
     try {
       const res = await fetch('/api/cameras');
-      const cams = await res.json();
+      let cams = await res.json();
+      cams = cams.filter(c => !c.is_upload); // uploaded-video jobs live on their own page, not here
       if (cams.length === 0) return;
       cameraTabs.innerHTML = '';
       cams.forEach(cam => {

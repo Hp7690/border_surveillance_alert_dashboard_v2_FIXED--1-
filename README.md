@@ -130,3 +130,55 @@ severity color coding:
 - 🟠 HIGH — zone intrusion, suspicious activity (crawling/climbing/fast approach/erratic movement), confirmed night intrusion
 - 🟡 MEDIUM — loitering, face detected, plate read
 - 🔵 LOW — unconfirmed night motion
+
+
+## Tamper-evident evidence ledger & chain of custody
+
+`core/ledger.py` · UI at `/ledger` · offline verifier `verify_bundle.py`
+
+Every CRITICAL/HIGH alert (weapon, intrusion, crawling, climbing ...) plus
+face / plate events is written to an **append-only, hash-chained,
+Ed25519-signed ledger** (`data/ledger.db`). Each block commits to the
+previous block's hash and to the **SHA-256 of the evidence itself**
+(snapshot JPEG and, once encoded, the video clip). Everything a human does
+afterwards is appended to the same chain, attributed to the logged-in user:
+
+| Entry | Written when | Actor |
+|---|---|---|
+| `ALERT_RAISED` | detection fires (alert + snapshot hash) | SYSTEM |
+| `CLIP_SEALED` | clip finishes encoding (clip hash) | SYSTEM |
+| `ACKNOWLEDGED` | `POST /api/alerts/<id>/ack` | operator |
+| `VIEWED_EVIDENCE` | operator opens snapshot/clip (hash *at view time*) | operator |
+| `ACTION_TAKEN` | `POST /api/alerts/<id>/action` (DISPATCHED / ESCALATED / MONITORING / FALSE_ALARM / RESOLVED / OTHER + note) | operator |
+| `EXPORTED` | court bundle downloaded | operator |
+
+**Endpoints:** `/api/ledger/status`, `/alerts`, `/verify`, `/custody/<id>`,
+`/bundle/<id>` (ZIP), `/pubkey`, `POST /anchor`.
+
+**Court bundle:** `evidence_<id>.zip` = evidence files + signed custody blocks +
+public key + `verify_bundle.py`. A third party can run
+`python verify_bundle.py <folder>` **offline** and gets PASS/FAIL per block
+and per file.
+
+**Demo:** `python demo_tamper.py` copies your ledger, edits/deletes a block
+and shows the verifier catching it. Tests: `python -m unittest tests.test_ledger`
+and `python tests/smoke_routes.py`.
+
+### What this does and does not guarantee
+* It is **tamper-evident**, not tamper-proof. Someone with root on the box
+  can wipe the DB *and* the key. Defence: anchors (chain head hash) are
+  written to `data/ledger_anchors.jsonl` and **pushed to every registered
+  webhook** (CRITICAL alerts and every operator action anchor immediately,
+  everything else every 25 blocks). Point a webhook at a second machine /
+  C2 server, or replace `anchor_hook` with a Hyperledger Fabric client
+  call; rolling back past an anchor is then detected. Blocks written *after*
+  the newest anchor can still be rolled back undetected (bounded window).
+* Keep `data/ledger_key.pem` readable only by the service account (HSM/TPM
+  in production). Whoever holds it can sign new blocks.
+* Custody is only as good as identity: create **one account per officer**
+  (`create_user.py`); a shared login makes "who acknowledged" meaningless.
+* Identities (e.g. whitelist face-match names) are stored on-chain only as a
+  keyed HMAC commitment, never in clear text (privacy / erasure-friendly).
+* `person_detected`, `vehicle_detected`, `night_motion` are deliberately not
+  sealed (noise); edit `LEDGER_SEVERITIES` / `LEDGER_EXTRA_TYPES` in
+  `core/alert_manager.py` to change policy.
